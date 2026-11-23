@@ -1,27 +1,4 @@
-"""Standalone 1-qubit Randomized Benchmarking (RB) characterization script.
-
-Supports three execution modes:
-1. Live IBM Quantum cloud execution (free tier):
-   Reads ``IBM_QUANTUM_TOKEN`` (and optional ``IBM_QUANTUM_INSTANCE``,
-   ``IBM_QUANTUM_CHANNEL``, ``IBM_QUANTUM_BACKEND``) from environment variables
-   or a local ``.env`` file. Saves raw RB survival probabilities, EPC/alpha
-   analysis results, transpiled physical gate density, and the backend's
-   reported qubit calibration metadata (T1, T2, gate duration, gate/readout errors).
-2. Local dry-run mode (``--dry-run``):
-   Runs the exact same ``qiskit-experiments`` ``StandardRB`` workflow on a local
-   ``qiskit-aer`` ``AerSimulator`` configured with a realistic superconducting
-   thermal-relaxation (T1/T2) noise model—no API token required.
-3. Pending-job retrieval mode (``--retrieve-job <job_id>``):
-   If a live IBM Quantum job timed out waiting in queue, retrieves its results
-   later without losing progress.
-
-Usage:
-    # Local dry-run with noisy Aer simulator:
-    python -m qtwin.hardware.rb_experiment --dry-run
-
-    # Live IBM Quantum execution (requires IBM_QUANTUM_TOKEN in .env or env):
-    python -m qtwin.hardware.rb_experiment --qubit 0 --shots 1024
-"""
+"""1-qubit Randomized Benchmarking runner for IBM Quantum and local Qiskit Aer dry-run."""
 
 from __future__ import annotations
 

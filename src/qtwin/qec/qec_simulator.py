@@ -1,20 +1,9 @@
-"""Stim rotated surface code memory simulator with PyMatching MWPM decoding.
-
-Compares Logical Error Rate (LER) across four physically distinct regimes:
-1. IBM-Reported Baseline (T1/T2 coherence limit only; eps_res=0, f_ZZ=0).
-2. Uncorrelated Digital Twin (calibrated T1/T2 + eps_res; f_ZZ=0).
-3. Correlated Hardware + Naive Decoder (full T1/T2 + eps_res + f_ZZ sampled,
-   decoded with a PyMatching MWPM graph that ignores ZZ crosstalk).
-4. Correlated Hardware + Digital-Twin Noise-Aware Decoder (same correlated
-   syndromes decoded with a PyMatching MWPM graph constructed from the full
-   correlated Detector Error Model).
-"""
+"""Stim rotated surface code memory benchmark with PyMatching MWPM decoding."""
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 import pymatching
@@ -29,8 +18,6 @@ from qtwin.qec.noise_bridge import (
 
 @dataclass(frozen=True)
 class QECBenchmarkPoint:
-    """Monte Carlo LER evaluation result for a single (regime, distance, f_zz) point."""
-
     regime: str
     distance: int
     rounds: int
@@ -44,9 +31,8 @@ class QECBenchmarkPoint:
 def _extract_data_qubits_and_neighbors(
     noiseless_circuit: stim.Circuit,
 ) -> tuple[list[int], list[tuple[int, int]]]:
-    """Identify rotated surface code data qubits and nearest-neighbor data pairs."""
     coords = noiseless_circuit.get_final_qubit_coordinates()
-    # In stim's rotated_memory_x, data qubits reside on odd-odd coordinates (1,1), (1,3), ...
+    # Data qubits sit on odd-odd coordinates in Stim's rotated_memory_x layout
     data_qubits = sorted(
         q for q, xy in coords.items() if int(round(xy[0])) % 2 == 1 and int(round(xy[1])) % 2 == 1
     )
@@ -56,7 +42,6 @@ def _extract_data_qubits_and_neighbors(
         xi, yi = coords[qi][0], coords[qi][1]
         for qj in data_qubits[idx_i + 1 :]:
             xj, yj = coords[qj][0], coords[qj][1]
-            # Nearest-neighbor data qubits on Stim's grid have Manhattan distance 2
             if abs(xi - xj) + abs(yi - yj) == 2.0:
                 pairs.append((qi, qj))
     return data_qubits, pairs
@@ -69,7 +54,6 @@ def _inject_noise_into_block(
     *,
     is_repeat_body: bool = False,
 ) -> stim.Circuit:
-    """Recursively inject Lindblad-twirled 1q memory, 2q gate, and physical-coupler ZZ noise."""
     out = stim.Circuit()
     zz_probs = [0.0] * 15
     # Stim PAULI_CHANNEL_2 order: IX,IY,IZ, XI,XX,XY,XZ, YI,YX,YY,YZ, ZI,ZX,ZY,ZZ
@@ -79,7 +63,6 @@ def _inject_noise_into_block(
     has_zz = noise.total_zz_error > 0.0
     has_1q = noise.total_1q_error > 0.0
 
-    # Per-round data-qubit T1/T2 memory error at the start of each repeat body
     if is_repeat_body and has_1q and data_qubits:
         out.append("PAULI_CHANNEL_1", data_qubits, [noise.p_x, noise.p_y, noise.p_z])
 
@@ -98,7 +81,6 @@ def _inject_noise_into_block(
         targets = inst.targets_copy()
         args = inst.gate_args_copy()
 
-        # Measurement bit-flip noise before M / MR / MX / MRX
         if name in ("M", "MR") and noise.p_meas > 0.0:
             qubits = [t.value for t in targets if t.is_qubit_target]
             if qubits:
@@ -110,7 +92,6 @@ def _inject_noise_into_block(
 
         out.append(name, targets, args)
 
-        # Two-qubit entangling gate depolarization + physical-coupler ZZ crosstalk
         if name in ("CX", "CY", "CZ", "CNOT"):
             qubits = [t.value for t in targets if t.is_qubit_target]
             if qubits and noise.p_2q_depol > 0.0:
@@ -118,7 +99,6 @@ def _inject_noise_into_block(
             if qubits and has_zz:
                 out.append("PAULI_CHANNEL_2", qubits, zz_probs)
 
-        # Reset error after R / MR / RX / MRX
         if name in ("R", "MR") and noise.p_reset > 0.0:
             qubits = [t.value for t in targets if t.is_qubit_target]
             if qubits:
@@ -151,7 +131,7 @@ def build_surface_code_circuit(
 
     noisy = _inject_noise_into_block(base, noise, data_qubits, is_repeat_body=False)
 
-    # Also ensure round 1 (outside REPEAT block) receives data-qubit memory error
+    # Round 1 sits outside the REPEAT block in Stim's generated circuit
     final = stim.Circuit()
     injected_first_round = False
     for inst in noisy:
@@ -177,7 +157,7 @@ def evaluate_surface_code_memory(
     rounds: int = 3,
     zz_coupling_mhz: float = 0.0,
 ) -> QECBenchmarkPoint:
-    """Sample syndromes from ``sample_circuit`` and decode with PyMatching MWPM."""
+    """Sample syndromes from sample_circuit and decode with PyMatching MWPM."""
     dec_circ = sample_circuit if decoder_circuit is None else decoder_circuit
     dem = dec_circ.detector_error_model(
         decompose_errors=True,
@@ -206,7 +186,6 @@ def evaluate_surface_code_memory(
 
 
 def compute_suppression_factor(ler_d1: float, ler_d2: float) -> float | None:
-    """Compute error suppression factor Lambda = LER(d) / LER(d + 2)."""
     if ler_d2 <= 0.0 or ler_d1 <= 0.0:
         return None
     return float(ler_d1 / ler_d2)
@@ -219,7 +198,7 @@ def run_four_regime_benchmark(
     shots: int = 50_000,
     seed: int = 42,
 ) -> list[QECBenchmarkPoint]:
-    """Compare the 4 QEC regimes across surface code distances d in {3, 5, 7}."""
+    """Compare IBM-reported, uncorrelated, naive-decoded, and noise-aware QEC regimes."""
     results: list[QECBenchmarkPoint] = []
 
     cal_ibm_baseline = HardwareCalibrationInput(
@@ -252,7 +231,6 @@ def run_four_regime_benchmark(
         circ_uncorr = build_surface_code_circuit(d, noise_uncorr, rounds=d)
         circ_corr = build_surface_code_circuit(d, noise_corr, rounds=d)
 
-        # (a) IBM-Reported Baseline
         results.append(
             evaluate_surface_code_memory(
                 circ_baseline,
@@ -265,7 +243,6 @@ def run_four_regime_benchmark(
                 zz_coupling_mhz=0.0,
             )
         )
-        # (b) Uncorrelated Digital Twin
         results.append(
             evaluate_surface_code_memory(
                 circ_uncorr,
@@ -278,7 +255,7 @@ def run_four_regime_benchmark(
                 zz_coupling_mhz=0.0,
             )
         )
-        # (c) Correlated Hardware + Naive Decoder (identical shots/seed as noise-aware!)
+        # Same seed so naive and noise-aware decoders see identical syndrome samples
         results.append(
             evaluate_surface_code_memory(
                 circ_corr,
@@ -291,7 +268,6 @@ def run_four_regime_benchmark(
                 zz_coupling_mhz=cal.zz_coupling_mhz,
             )
         )
-        # (d) Correlated Hardware + Digital-Twin Noise-Aware Decoder
         results.append(
             evaluate_surface_code_memory(
                 circ_corr,
@@ -316,7 +292,7 @@ def run_zz_crosstalk_sweep(
     shots: int = 50_000,
     seed: int = 1000,
 ) -> list[QECBenchmarkPoint]:
-    """Sweep f_ZZ crosstalk strength comparing Naive vs. Digital-Twin Noise-Aware decoders."""
+    """Sweep f_ZZ comparing naive vs. noise-aware PyMatching decoders."""
     results: list[QECBenchmarkPoint] = []
 
     cal_uncorr = HardwareCalibrationInput(

@@ -1,15 +1,4 @@
-"""Mandatory Phase 0 physics verification tests for the Lindblad master equation engine.
-
-Verifies:
-1. Exact analytical agreement (< 1e-4) for T1 amplitude damping: P_1(t) = exp(-t / T1).
-2. Exact analytical agreement (< 1e-4) for T2 Ramsey decay:
-   <sigma_x(t)> = exp(-t / T2) * cos(Delta * t) and P_+(t) = 0.5 * (1 + <sigma_x(t)>).
-3. Exact analytical agreement (< 1e-4) for two-qubit ZZ phase accumulation:
-   Delta_phi_ZZ(t) = zeta_ZZ * t.
-4. Density matrix trace preservation (Tr(rho) = 1), Hermiticity, and positivity
-   at every time step for both single-qubit and two-qubit open evolutions.
-5. Physical parameter validation (e.g., T2 <= 2 * T1).
-"""
+"""Analytical verification tests for the 1-qubit and 2-qubit Lindblad solver."""
 
 from __future__ import annotations
 

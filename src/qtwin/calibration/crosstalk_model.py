@@ -1,18 +1,4 @@
-"""2-Qubit Correlated ZZ Crosstalk Fitting Engine using QuTiP's 2-qubit Lindblad solver.
-
-Models the degradation of Simultaneous 1-qubit RB decay rates (alpha_sim) relative to
-Isolated 1-qubit RB (alpha_iso) via our QuTiP 2-qubit open quantum system engine
-(`TwoQubitParams`, `simulate_two_qubit`):
-
-- In Isolated RB (spectator idle in |0>), H_ZZ = zeta_ZZ |11><11| has zero effect,
-  so each qubit k decays at alpha_iso_k = alpha_1q(T1_k, T2_k, t_cliff) * (1 - 2 * eps_loc_k).
-- In Simultaneous RB (spectator twirled over C_1, average state I/2), evolving
-  cardinal states of qubit k tensored with I/2 through QuTiP `simulate_two_qubit`
-  under H = zeta_ZZ (n_a x n_b) yields the exact reduced depolarizing parameter:
-      alpha_sim_lindblad_k(f_zz) = (exp(-t/T1_k) + 2*exp(-t/T2_k) * cos^2(pi * f_zz * t)) / 3
-  and total simultaneous decay:
-      alpha_sim_k = alpha_sim_lindblad_k(f_zz) * (1 - 2 * eps_loc_k) * (1 - 2 * eps_corr).
-"""
+"""Joint 2-qubit Lindblad ZZ crosstalk fitter for Isolated and Simultaneous RB."""
 
 from __future__ import annotations
 
@@ -40,8 +26,6 @@ CrosstalkFitMode = Literal["fit_zz", "fit_zz_and_corr"]
 
 @dataclass(frozen=True)
 class CrosstalkFitResult:
-    """Fitted 2-qubit correlated Lindblad crosstalk parameters and diagnostics."""
-
     mode: str
     zz_coupling_mhz: float
     zz_coupling_mhz_err: float | None
@@ -52,19 +36,16 @@ class CrosstalkFitResult:
     local_error_b: float
     local_error_b_err: float | None
     clifford_duration_us: float
-    # Predicted RB metrics
     pred_epc_iso_a: float
     pred_epc_iso_b: float
     pred_epc_sim_a: float
     pred_epc_sim_b: float
     pred_delta_epc_a: float
     pred_delta_epc_b: float
-    # Predicted curves
     p0_iso_a_pred: list[float]
     p0_iso_b_pred: list[float]
     p0_sim_a_pred: list[float]
     p0_sim_b_pred: list[float]
-    # Combined goodness-of-fit across all 4 curves (iso_a, iso_b, sim_a, sim_b)
     rmse_total: float
     rmse_sim: float
     chi2_total: float
@@ -83,10 +64,9 @@ def lindblad_two_qubit_srb_alphas(
     params: TwoQubitParams,
     clifford_duration_us: float,
 ) -> tuple[float, float, float, float]:
-    """Compute (alpha_iso_a, alpha_iso_b, alpha_sim_a, alpha_sim_b) via QuTiP 2q `mesolve`.
+    """Compute (alpha_iso_a, alpha_iso_b, alpha_sim_a, alpha_sim_b) via QuTiP 2q mesolve.
 
-    For Isolated RB on qubit a, spectator b is initialized in |0><0|.
-    For Simultaneous RB on qubit a, spectator b is twirled (maximally mixed I/2).
+    Spectator is in |0><0| for isolated RB and maximally mixed I/2 for twirled simultaneous RB.
     """
     times = np.array([0.0, clifford_duration_us], dtype=float)
     eye = qt.qeye(2)
@@ -113,7 +93,9 @@ def lindblad_two_qubit_srb_alphas(
         ]
         vals: list[float] = []
         for rho_t, obs in cardinals:
-            rho_init = qt.tensor(rho_t, spectator_state) if target == 0 else qt.tensor(spectator_state, rho_t)
+            rho_init = (
+                qt.tensor(rho_t, spectator_state) if target == 0 else qt.tensor(spectator_state, rho_t)
+            )
             res = simulate_two_qubit(params, rho_init, times, e_ops=[obs], store_states=False)
             vals.append(float(res.expect[0][-1]))
         d_z = 0.5 * (vals[0] - vals[1])
@@ -145,7 +127,7 @@ def predict_srb_curves(
     amp_b: float = 0.5,
     off_b: float = 0.5,
 ) -> dict[str, Any]:
-    """Predict Isolated and Simultaneous RB survival curves from QuTiP 2q Lindblad dynamics."""
+    """Predict isolated and simultaneous RB survival curves from 2q Lindblad dynamics."""
     m = np.asarray(lengths, dtype=float)
     params = TwoQubitParams(
         qubit0=SingleQubitParams(freq_mhz=0.0, t1_us=t1_a_us, t2_us=min(t2_a_us, 2.0 * t1_a_us)),
@@ -205,13 +187,7 @@ def fit_crosstalk_to_srb(
     mode: CrosstalkFitMode = "fit_zz",
     zz_init_mhz: float = 0.2,
 ) -> CrosstalkFitResult:
-    """Jointly fit local residual errors and 2-qubit ZZ crosstalk to Isolated + Simultaneous RB.
-
-    Parameters fitted:
-    - ``mode="fit_zz"``: ``(zz_mhz, eps_loc_a, eps_loc_b, amp_a, off_a, amp_b, off_b)``
-      with ``eps_corr = 0``. Cleanly isolates static/effective ZZ coupling in MHz.
-    - ``mode="fit_zz_and_corr"``: adds ``eps_corr >= 0`` for correlated 2q depolarizing noise.
-    """
+    """Jointly fit local residual errors and static ZZ coupling (MHz) to SRB curves."""
     m = np.asarray(lengths, dtype=float)
     y_ia, s_ia = np.asarray(p0_iso_a, dtype=float), np.maximum(np.asarray(p0_iso_a_std, dtype=float), 1e-6)
     y_ib, s_ib = np.asarray(p0_iso_b, dtype=float), np.maximum(np.asarray(p0_iso_b_std, dtype=float), 1e-6)
@@ -222,12 +198,10 @@ def fit_crosstalk_to_srb(
     amp_b0 = float(np.clip(y_ib[0] - 0.5, 0.1, 0.55))
 
     if mode == "fit_zz":
-        # [zz_mhz, eps_loc_a, eps_loc_b, amp_a, off_a, amp_b, off_b]
         x0 = [max(zz_init_mhz, 1e-3), 1e-4, 1e-4, amp_a0, 0.5, amp_b0, 0.5]
         lb = [0.0, 0.0, 0.0, 0.05, 0.2, 0.05, 0.2]
         ub = [10.0, 0.15, 0.15, 0.6, 0.8, 0.6, 0.8]
     elif mode == "fit_zz_and_corr":
-        # [zz_mhz, eps_corr, eps_loc_a, eps_loc_b, amp_a, off_a, amp_b, off_b]
         x0 = [max(zz_init_mhz, 1e-3), 1e-4, 1e-4, 1e-4, amp_a0, 0.5, amp_b0, 0.5]
         lb = [0.0, 0.0, 0.0, 0.0, 0.05, 0.2, 0.05, 0.2]
         ub = [10.0, 0.15, 0.15, 0.15, 0.6, 0.8, 0.6, 0.8]
@@ -364,7 +338,7 @@ def fit_srb_json(
     *,
     mode: CrosstalkFitMode = "fit_zz",
 ) -> dict[str, Any]:
-    """Load an SRB JSON, compute uncorrelated baseline (ZZ=0), and fit correlated Lindblad model."""
+    """Load an SRB JSON, evaluate uncorrelated (ZZ=0) baseline, and fit 2q Lindblad model."""
     path = Path(json_path)
     with path.open("r", encoding="utf-8") as fh:
         data = json.load(fh)
@@ -398,8 +372,6 @@ def fit_srb_json(
         mode=mode,
     )
 
-    # Uncorrelated baseline (zz_coupling_mhz = 0, correlated_error = 0, using fitted local errors & SPAM)
-    # Use isolated SPAM from raw fits for clean comparison
     uncorr = predict_srb_curves(
         lengths,
         t1_a_us=t1_a,

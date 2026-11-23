@@ -1,22 +1,4 @@
-"""Lindblad open-system noise fitting against 1-qubit Randomized Benchmarking data.
-
-Connects the Phase 0 QuTiP Lindblad simulator (`qtwin.physics.lindblad`) directly to
-measured RB survival curves P_0(m) = A * alpha^m + B:
-
-1. Given (T1, T2) and an effective physical Clifford duration t_clifford (in us),
-   we evolve cardinal single-qubit states through QuTiP's `mesolve` to obtain the
-   Pauli Transfer Matrix diagonal traces (D_X, D_Y, D_Z) and exact depolarizing
-   parameter:
-       alpha_lindblad = (D_X + D_Y + D_Z) / 3
-   which equals (exp(-t/T1) + 2*exp(-t/T2)) / 3 for pure T1/T2 Lindblad noise.
-2. An optional residual depolarizing/coherent error term `residual_error >= 0`
-   captures excess gate error beyond coherence limits:
-       alpha_total = alpha_lindblad * (1 - 2 * residual_error),
-       EPC = (1 - alpha_total) / 2.
-3. `scipy.optimize.least_squares` fits physical parameters under strict physical
-   bounds (T1 > 0, 0 < T2 <= 2 * T1) and estimates 1-sigma parameter uncertainties
-   from the Jacobian covariance matrix.
-"""
+"""Single-qubit Lindblad RB survival-curve fitter using QuTiP mesolve and scipy least_squares."""
 
 from __future__ import annotations
 
@@ -42,8 +24,6 @@ FitMode = Literal["fit_t2", "fit_residual", "fit_t1_t2"]
 
 @dataclass(frozen=True)
 class LindbladFitResult:
-    """Fitted Lindblad model parameters, uncertainties, and goodness-of-fit metrics."""
-
     mode: str
     t1_us: float
     t1_us_err: float | None
@@ -69,7 +49,6 @@ class LindbladFitResult:
 
 
 def _plus_i_state() -> qt.Qobj:
-    """Return |+i> = (|0> + i|1>) / sqrt(2)."""
     return (qt.basis(2, 0) + 1j * qt.basis(2, 1)).unit()
 
 
@@ -79,30 +58,14 @@ def lindblad_clifford_alpha(
     clifford_duration_us: float,
     residual_error: float = 0.0,
 ) -> float:
-    """Compute the 1-qubit RB depolarizing parameter alpha via QuTiP Lindblad evolution.
-
-    Evolves |0>, |1>, |+>, and |+i> for ``clifford_duration_us`` using
-    ``simulate_single_qubit`` in the rotating frame (freq_mhz=0) and evaluates
-    the Pauli Transfer Matrix diagonal average alpha_lindblad = (D_X + D_Y + D_Z) / 3.
-
-    Args:
-        t1_us: Energy relaxation time T1 in microseconds.
-        t2_us: Coherence time T2 in microseconds (must satisfy T2 <= 2 * T1).
-        clifford_duration_us: Effective physical duration of one Clifford gate in us.
-        residual_error: Additional per-Clifford depolarizing/coherent error (>= 0).
-
-    Returns:
-        Total RB depolarizing parameter alpha in [0, 1].
-    """
+    """Compute 1q RB depolarizing parameter alpha from QuTiP PTM diagonal traces."""
     if clifford_duration_us < 0.0:
         raise ValueError(f"clifford_duration_us must be non-negative, got {clifford_duration_us}.")
 
     params = SingleQubitParams(freq_mhz=0.0, t1_us=t1_us, t2_us=t2_us)
     times = np.array([0.0, clifford_duration_us], dtype=float)
 
-    sz = qt.sigmaz()
-    sx = qt.sigmax()
-    sy = qt.sigmay()
+    sz, sx, sy = qt.sigmaz(), qt.sigmax(), qt.sigmay()
 
     res_0 = simulate_single_qubit(params, ground_state(), times, e_ops=[sz], store_states=False)
     res_1 = simulate_single_qubit(params, excited_state(), times, e_ops=[sz], store_states=False)
@@ -128,11 +91,7 @@ def predict_rb_survival(
     offset: float = 0.5,
     residual_error: float = 0.0,
 ) -> tuple[np.ndarray, float, float]:
-    """Predict RB survival probabilities P_0(m) = A * alpha^m + B from Lindblad physics.
-
-    Returns:
-        Tuple ``(p0_pred, alpha, epc)`` where ``epc = (1 - alpha) / 2``.
-    """
+    """Predict P_0(m) = A * alpha^m + B; returns (p0_pred, alpha, epc)."""
     m = np.asarray(lengths, dtype=float)
     alpha = lindblad_clifford_alpha(
         t1_us=t1_us,
@@ -151,7 +110,6 @@ def compute_goodness_of_fit(
     y_err: np.ndarray,
     n_params: int,
 ) -> dict[str, float | int]:
-    """Compute RMSE, max absolute error, chi-squared, and reduced chi-squared."""
     diff = y_pred - y_obs
     sigma = np.maximum(np.asarray(y_err, dtype=float), 1e-9)
     rmse = float(np.sqrt(np.mean(diff**2)))
@@ -173,7 +131,6 @@ def _covariance_uncertainties(
     residuals: np.ndarray,
     dof: int,
 ) -> np.ndarray:
-    """Compute 1-sigma parameter standard errors from the least-squares Jacobian."""
     jtj = jac.T @ jac
     cov_unscaled = np.linalg.pinv(jtj)
     s2 = float(np.sum(residuals**2) / max(dof, 1))
@@ -193,30 +150,7 @@ def fit_lindblad_to_rb(
     residual_error_init: float = 1e-4,
     fit_spam: bool = True,
 ) -> LindbladFitResult:
-    """Fit the QuTiP Lindblad RB model to measured survival probabilities P_0(m).
-
-    Supported modes:
-    - ``"fit_t2"``: Fixes T1 to ``t1_us_init`` and fits effective T2 in (0, 2*T1]
-      (plus SPAM A, B if ``fit_spam=True``). Well-posed and identifiable from 1q RB.
-    - ``"fit_residual"``: Fixes (T1, T2) to backend-reported ``(t1_us_init, t2_us_init)``
-      and fits the excess residual gate error ``residual_error >= 0`` (plus SPAM A, B).
-    - ``"fit_t1_t2"``: Jointly fits T1 > 0 and ratio eta = T2 / (2*T1) in (0, 1]
-      (strictly enforcing 0 < T2 <= 2*T1) with mild soft-prior stabilization on T1.
-
-    Args:
-        lengths: 1D array of Clifford sequence lengths m.
-        p0_mean: Measured mean survival probabilities P_0(m).
-        p0_std: 1-sigma uncertainties on P_0(m).
-        clifford_duration_us: Effective physical duration of one Clifford gate in us.
-        mode: Parameterization mode (``"fit_t2"``, ``"fit_residual"``, or ``"fit_t1_t2"``).
-        t1_us_init: Initial (or fixed) T1 in microseconds.
-        t2_us_init: Initial (or fixed) T2 in microseconds.
-        residual_error_init: Initial residual error for ``"fit_residual"`` mode.
-        fit_spam: If True, also fit SPAM amplitude A and offset B; else fix A=0.5, B=0.5.
-
-    Returns:
-        ``LindbladFitResult`` with fitted parameters, 1-sigma uncertainties, and metrics.
-    """
+    """Fit 1q Lindblad RB model under physical bounds (T1 > 0, T2 <= 2*T1)."""
     m = np.asarray(lengths, dtype=float)
     y = np.asarray(p0_mean, dtype=float)
     sigma = np.maximum(np.asarray(p0_std, dtype=float), 1e-6)
@@ -225,7 +159,6 @@ def fit_lindblad_to_rb(
         raise ValueError(f"t1_us_init must be positive, got {t1_us_init}.")
     t2_clamped = float(np.clip(t2_us_init, 1e-2, 2.0 * t1_us_init * (1.0 - 1e-9)))
 
-    # Reasonable SPAM initial guesses from endpoints
     b_init = 0.5
     a_init = float(np.clip(y[0] - b_init, 0.05, 0.55))
 
@@ -314,7 +247,7 @@ def fit_lindblad_to_rb(
                 offset=off,
                 residual_error=0.0,
             )
-            # Soft 20% prior on T1 to break T1/T2 degeneracy in 1q RB
+            # 20% soft prior on T1 to break T1/T2 degeneracy in 1q RB
             prior_t1 = (t1_val - t1_us_init) / (0.2 * t1_us_init)
             return np.concatenate([(pred - y) / sigma, [prior_t1]])
 
@@ -326,7 +259,6 @@ def fit_lindblad_to_rb(
         eta_fit = float(opt.x[1])
         t2_fit = 2.0 * t1_fit * eta_fit
         t1_err = float(errs[0])
-        # First-order error propagation for T2 = 2 * T1 * eta
         t2_err = float(2.0 * np.hypot(eta_fit * errs[0], t1_fit * errs[1]))
         res_fit, res_err = 0.0, None
         amp_fit = float(opt.x[2]) if fit_spam else 0.5
@@ -378,7 +310,7 @@ def fit_rb_json(
     *,
     mode: FitMode = "fit_t2",
 ) -> dict[str, Any]:
-    """Load an RB result JSON, compute reported-calibration baseline, and fit Lindblad model."""
+    """Load an RB JSON, evaluate reported-calibration baseline, and fit Lindblad model."""
     path = Path(json_path)
     with path.open("r", encoding="utf-8") as fh:
         data = json.load(fh)
@@ -394,7 +326,6 @@ def fit_rb_json(
     avg_gates = float(data.get("avg_physical_gates_per_clifford", 1.0))
     clifford_duration_us = (sx_ns * 1e-3) * avg_gates
 
-    # Fit Lindblad model to measured survival curve
     fit_res = fit_lindblad_to_rb(
         lengths,
         p0_mean,
@@ -406,7 +337,6 @@ def fit_rb_json(
         fit_spam=True,
     )
 
-    # Backend-reported T1/T2 coherence-limited baseline (using fitted SPAM A, B for fair decay comparison)
     baseline_pred, baseline_alpha, baseline_epc = predict_rb_survival(
         lengths,
         t1_us=t1_rep,

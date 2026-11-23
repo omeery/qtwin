@@ -1,24 +1,4 @@
-"""2-Qubit Simultaneous Randomized Benchmarking (SRB) hardware module.
-
-Runs Isolated 1-qubit RB (on q_a and q_b separately) and Simultaneous 1-qubit RB
-(on (q_a, q_b) in parallel) inside a single execution batch / SamplerV2 job to
-eliminate time-drift between protocols and isolate correlated 2-qubit crosstalk.
-
-Supports:
-1. Live IBM Quantum execution (reads ``IBM_QUANTUM_TOKEN`` from ``.env`` or env).
-   Automatically selects a physically connected qubit pair from the backend's
-   coupling map (preferring ``(0, 1)`` if connected with valid calibration data).
-2. Local ``--dry-run`` mode on Qiskit Aer with configurable thermal relaxation
-   (T1, T2) plus an exact synthetic coherent ZZ crosstalk channel
-   ``U_ZZ = exp(-i * zeta_ZZ * t_clifford |11><11|)`` per simultaneous Clifford.
-
-Usage:
-    # Local Aer dry-run with known 0.25 MHz ZZ crosstalk:
-    python -m qtwin.hardware.srb_experiment --dry-run
-
-    # Live IBM Quantum run on ibm_fez:
-    python -m qtwin.hardware.srb_experiment --backend ibm_fez
-"""
+"""2-qubit Isolated + Simultaneous RB runner for IBM Quantum and local Aer ZZ dry-run."""
 
 from __future__ import annotations
 

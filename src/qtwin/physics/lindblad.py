@@ -1,12 +1,7 @@
-"""Single-qubit and two-qubit Lindblad master equation simulator using QuTiP.
+"""Single-qubit and two-qubit Lindblad master equation solver (QuTiP mesolve, hbar = 1).
 
-Conventions (hbar = 1):
-- |0> = basis(2, 0) is the ground state; |1> = basis(2, 1) is the excited state.
-- Number operator: n = |1><1| = destroy(2).dag() * destroy(2).
-- Amplitude damping collapse operator: L_1 = sqrt(gamma_1) * destroy(2),
-  which maps |1> -> |0> at rate gamma_1 = 1 / T1.
-- Pure dephasing collapse operator: L_phi = sqrt(gamma_phi / 2) * sigmaz(),
-  which damps off-diagonal coherence rho_01 at rate gamma_phi = 1/T2 - 1/(2*T1).
+Basis: |0> = basis(2, 0) ground, |1> = basis(2, 1) excited, n = |1><1|.
+Collapse ops: L_1 = sqrt(1/T1) * destroy(2), L_phi = sqrt(gamma_phi / 2) * sigmaz().
 """
 
 from __future__ import annotations
@@ -20,27 +15,22 @@ from qtwin.physics.params import SingleQubitParams, TwoQubitParams
 
 
 def ground_state() -> qt.Qobj:
-    """Return single-qubit ground state |0>."""
     return qt.basis(2, 0)
 
 
 def excited_state() -> qt.Qobj:
-    """Return single-qubit excited state |1>."""
     return qt.basis(2, 1)
 
 
 def plus_state() -> qt.Qobj:
-    """Return single-qubit superposition state |+> = (|0> + |1>) / sqrt(2)."""
     return (qt.basis(2, 0) + qt.basis(2, 1)).unit()
 
 
 def build_single_qubit_hamiltonian(params: SingleQubitParams) -> qt.Qobj:
-    """Construct the single-qubit Hamiltonian H = omega_q |1><1| (rad/us)."""
     return params.omega_rad_per_us * qt.num(2)
 
 
 def build_single_qubit_collapse_ops(params: SingleQubitParams) -> list[qt.Qobj]:
-    """Construct Lindblad collapse operators for T1 relaxation and pure dephasing."""
     c_ops: list[qt.Qobj] = []
     if params.gamma1_per_us > 0.0:
         c_ops.append(np.sqrt(params.gamma1_per_us) * qt.destroy(2))
@@ -50,13 +40,8 @@ def build_single_qubit_collapse_ops(params: SingleQubitParams) -> list[qt.Qobj]:
 
 
 def build_two_qubit_hamiltonian(params: TwoQubitParams) -> qt.Qobj:
-    """Construct two-qubit Hamiltonian with static ZZ crosstalk.
-
-    H = omega_0 (n x I) + omega_1 (I x n) + zeta_zz (n x n).
-    """
     n_op = qt.num(2)
     eye = qt.qeye(2)
-
     h0 = params.qubit0.omega_rad_per_us * qt.tensor(n_op, eye)
     h1 = params.qubit1.omega_rad_per_us * qt.tensor(eye, n_op)
     h_zz = params.zeta_zz_rad_per_us * qt.tensor(n_op, n_op)
@@ -64,10 +49,8 @@ def build_two_qubit_hamiltonian(params: TwoQubitParams) -> qt.Qobj:
 
 
 def build_two_qubit_collapse_ops(params: TwoQubitParams) -> list[qt.Qobj]:
-    """Construct local Lindblad collapse operators for a two-qubit system."""
     eye = qt.qeye(2)
     c_ops: list[qt.Qobj] = []
-
     for op in build_single_qubit_collapse_ops(params.qubit0):
         c_ops.append(qt.tensor(op, eye))
     for op in build_single_qubit_collapse_ops(params.qubit1):
@@ -76,7 +59,6 @@ def build_two_qubit_collapse_ops(params: TwoQubitParams) -> list[qt.Qobj]:
 
 
 def _as_density_matrix(state: qt.Qobj) -> qt.Qobj:
-    """Convert a ket to a density matrix, or return an existing density matrix."""
     return qt.ket2dm(state) if state.isket else state
 
 
@@ -90,20 +72,7 @@ def simulate_single_qubit(
     atol: float = 1e-10,
     rtol: float = 1e-8,
 ) -> qt.solver.Result:
-    """Evolve a single-qubit open quantum system via QuTiP's ``mesolve``.
-
-    Args:
-        params: Single-qubit physical parameters.
-        initial_state: Initial ket or density matrix (2D Hilbert space).
-        times_us: 1D array of evaluation times in microseconds.
-        e_ops: Optional expectation-value operators.
-        store_states: Whether to store full density matrices at each time step.
-        atol: Absolute ODE solver tolerance.
-        rtol: Relative ODE solver tolerance.
-
-    Returns:
-        QuTiP ``Result`` object containing ``states`` and/or ``expect``.
-    """
+    """Evolve a single-qubit open system via QuTiP mesolve."""
     hamiltonian = build_single_qubit_hamiltonian(params)
     c_ops = build_single_qubit_collapse_ops(params)
     rho0 = _as_density_matrix(initial_state)
@@ -128,20 +97,7 @@ def simulate_two_qubit(
     atol: float = 1e-10,
     rtol: float = 1e-8,
 ) -> qt.solver.Result:
-    """Evolve a two-qubit open quantum system with static ZZ crosstalk via ``mesolve``.
-
-    Args:
-        params: Two-qubit physical parameters.
-        initial_state: Initial ket or density matrix in the 4D two-qubit Hilbert space.
-        times_us: 1D array of evaluation times in microseconds.
-        e_ops: Optional expectation-value operators.
-        store_states: Whether to store full density matrices at each time step.
-        atol: Absolute ODE solver tolerance.
-        rtol: Relative ODE solver tolerance.
-
-    Returns:
-        QuTiP ``Result`` object containing ``states`` and/or ``expect``.
-    """
+    """Evolve a two-qubit open system with static ZZ coupling via QuTiP mesolve."""
     hamiltonian = build_two_qubit_hamiltonian(params)
     c_ops = build_two_qubit_collapse_ops(params)
     rho0 = _as_density_matrix(initial_state)
@@ -160,12 +116,7 @@ def simulate_t1_relaxation(
     params: SingleQubitParams,
     times_us: np.ndarray,
 ) -> tuple[np.ndarray, list[qt.Qobj]]:
-    """Run a T1 energy relaxation experiment starting from |1>.
-
-    Returns:
-        Tuple of ``(p1_array, states)``, where ``p1_array`` is the excited-state
-        population P_1(t) = <1|rho(t)|1>.
-    """
+    """T1 relaxation from |1>; returns (P_1(t), states)."""
     result = simulate_single_qubit(
         params=params,
         initial_state=excited_state(),
@@ -181,13 +132,7 @@ def simulate_ramsey_decay(
     params: SingleQubitParams,
     times_us: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, list[qt.Qobj]]:
-    """Run a T2 Ramsey free-induction decay experiment starting from |+>.
-
-    Returns:
-        Tuple of ``(sigma_x, p_plus, states)``, where:
-        - ``sigma_x`` is <sigma_x(t)> = exp(-t / T2) * cos(omega * t)
-        - ``p_plus`` is P_+(t) = <+|rho(t)|+> = 0.5 * (1 + <sigma_x(t)>)
-    """
+    """Ramsey decay from |+>; returns (<sigma_x(t)>, P_+(t), states)."""
     result = simulate_single_qubit(
         params=params,
         initial_state=plus_state(),
@@ -204,18 +149,7 @@ def simulate_zz_phase_accumulation(
     params: TwoQubitParams,
     times_us: np.ndarray,
 ) -> dict[str, Any]:
-    """Run a conditional Ramsey experiment on qubit 0 with spectator qubit 1 in |0> vs |1>.
-
-    When qubit 0 is initialized in |+>, its phase evolves at rate omega_0 if
-    qubit 1 is in |0>, and at rate (omega_0 + zeta_zz) if qubit 1 is in |1>.
-    Because <sigma_x> = r * cos(phi) and <sigma_y> = -r * sin(phi) under
-    H = omega |1><1|, the unwrapped phase is extracted via
-    ``angle(<sigma_x> - 1j * <sigma_y>)``.
-
-    Returns:
-        Dictionary containing expectation values, unwrapped phases, differential
-        ZZ phase ``zz_phase_diff_rad``, and density matrix trajectories.
-    """
+    """Conditional Ramsey on qubit 0 with spectator qubit 1 in |0> vs |1>."""
     eye = qt.qeye(2)
     sx0 = qt.tensor(qt.sigmax(), eye)
     sy0 = qt.tensor(qt.sigmay(), eye)
@@ -243,6 +177,7 @@ def simulate_zz_phase_accumulation(
     sx_1 = np.asarray(res_1.expect[0], dtype=float)
     sy_1 = np.asarray(res_1.expect[1], dtype=float)
 
+    # Under H = w |1><1|, <sigma_x> - i<sigma_y> = r * exp(+i * phi)
     phase_0 = np.unwrap(np.angle(sx_0 - 1j * sy_0))
     phase_1 = np.unwrap(np.angle(sx_1 - 1j * sy_1))
     zz_phase_diff = phase_1 - phase_0
