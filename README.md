@@ -1,5 +1,7 @@
 # qtwin
 
+[![DOI](https://zenodo.org/badge/1468482817.svg)](https://doi.org/10.5281/zenodo.24459168)
+
 `qtwin` is a hardware-calibrated open-system Lindblad digital twin for superconducting quantum processors. It closes the loop from live IBM Heron (`ibm_fez`) Randomized Benchmarking (RB) and Simultaneous Randomized Benchmarking (SRB) measurements to Pauli-twirled circuit-level noise models for `stim` and `pymatching` rotated surface code simulations.
 
 ---
