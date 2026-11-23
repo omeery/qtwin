@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+title: "qtwin: Hardware-Calibrated Open-System Digital Twin for Superconducting Quantum Processors"
+message: "If you use this software or the ibm_fez benchmark dataset in your research, please cite it using the metadata below."
+type: software
+authors:
+  - name: "qtwin Contributors"
+version: 0.1.0
+date-released: "2026-11-23"
+license: Apache-2.0
+keywords:
+  - quantum computing
+  - open quantum systems
+  - lindblad master equation
+  - randomized benchmarking
+  - zz crosstalk
+  - quantum error correction
+  - surface code
+  - qutip
+  - stim
+  - pymatching
