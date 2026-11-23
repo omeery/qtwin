@@ -3,7 +3,8 @@ title: "qtwin: Hardware-Calibrated Open-System Digital Twin for Superconducting 
 message: "If you use this software or the ibm_fez benchmark dataset in your research, please cite it using the metadata below."
 type: software
 authors:
-  - name: "qtwin Contributors"
+  - family-names: "Yel"
+    given-names: "Omer"
 version: 0.1.0
 doi: 10.5281/zenodo.24459168
 date-released: "2026-11-23"

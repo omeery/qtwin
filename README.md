@@ -36,6 +36,17 @@ Mapping the calibrated Lindblad parameters and extracted $f_{ZZ}$ via Pauli twir
 
 ---
 
+## Core Technical Contributions
+
+Beyond standard Qiskit/QuTiP/Stim usage, `qtwin` centers on two custom integration and inverse-problem modules designed and engineered by **Omer Yel** to close the loop from live superconducting hardware telemetry to circuit-level QEC evaluation:
+
+1. **Joint 2-Qubit Lindblad Crosstalk Fitter (`src/qtwin/calibration/crosstalk_model.py`):**
+   A custom inverse-problem solver that jointly fits isolated and simultaneous 1-qubit RB survival curves from live `ibm_fez` measurements inside a unified QuTiP two-qubit Lindblad master-equation model (`TwoQubitParams`, `simulate_two_qubit`). It extracts effective static $ZZ$ crosstalk ($f_{ZZ}$) and local residual gate errors with Jacobian-covariance 1-sigma uncertainty bounds while separating static $ZZ$ shifts from asymmetric dynamic/RF drive crosstalk.
+2. **Lindblad-to-Pauli Twirl QEC Bridge (`src/qtwin/qec/noise_bridge.py`):**
+   A physics-to-QEC translation layer that maps continuous-time, hardware-calibrated Lindblad parameters ($T_1$, $T_2$, residual control error $\epsilon_{\mathrm{res}}$, gate/cycle durations, and extracted $f_{ZZ}$) into strictly normalized discrete single-qubit (`PAULI_CHANNEL_1`) and correlated two-qubit (`PAULI_CHANNEL_2`) Pauli-twirled channels, injecting them directly into `stim` rotated surface code circuits for `pymatching` threshold benchmarking.
+
+---
+
 ## Limitations and Modeling Assumptions
 
 1. **Single-Pair Homogeneous Crosstalk Projection:** The coupling $f_{ZZ} = 0.2864\text{ MHz}$ was measured on a single connected pair `(0, 1)` of `ibm_fez` and projected uniformly across all surface code `CX` couplers in Phase 3. This represents a homogeneous worst-case stress test rather than a full-chip spatial crosstalk map.
@@ -116,4 +127,23 @@ Copy `.env.example` to `.env`, set `IBM_QUANTUM_TOKEN`, and run:
 ```bash
 python -m qtwin.hardware.rb_experiment --qubit 0 --lengths 1 20 50 100 200 350 500 --num-samples 5 --shots 1024
 python -m qtwin.hardware.srb_experiment --backend ibm_fez --lengths 1 20 50 100 200 350 500 --num-samples 5 --shots 1024
+```
+
+---
+
+## Author and Citation
+
+Designed and engineered by **Omer Yel**.
+
+If you use `qtwin` or the `ibm_fez` calibration and crosstalk benchmark datasets, please cite via the Zenodo archive (`10.5281/zenodo.24459168`):
+
+```bibtex
+@software{yel2026qtwin,
+  author  = {Yel, Omer},
+  title   = {qtwin: Hardware-Calibrated Open-System Digital Twin for Superconducting Quantum Processors},
+  version = {0.1.0},
+  year    = {2026},
+  doi     = {10.5281/zenodo.24459168},
+  url     = {https://doi.org/10.5281/zenodo.24459168}
+}
 ```
